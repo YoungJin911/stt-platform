@@ -69,25 +69,73 @@ NORMALIZED_AUDIO = "work/normalized.wav"
 
 RECOVERY_DIR = "work/recovery"
 ALIGN_DIR = "work/alignment"
-OMISSION_SECONDARY_DIR = "work/omission_secondary"
-OMISSION_VERIFY_DIR = "work/omission_v2"
-OMISSION_REALIGN_DIR = "work/omission_realign"
 
-OUTPUT_RAW_JSON = "output/raw_transcript.json"
-OUTPUT_CORRECTED_JSON = "output/corrected_transcript.json"
-OUTPUT_CORRECTION_LOG = "output/correction_log.json"
-OUTPUT_REVIEW_CANDIDATES = "output/review_candidates.json"
+# Stable alignment secondary ASR
+ALIGNMENT_SECONDARY_DIR = (
+    "work/alignment_secondary"
+)
 
-OUTPUT_OMISSION_CANDIDATES = "output/omission_candidates.json"
-OUTPUT_OMISSION_LOG = "output/omission_log.json"
-OUTPUT_OMISSION_REVIEW = "output/omission_review.json"
-OUTPUT_OMISSION_REALIGN_LOG = "output/omission_realign_log.json"
+# New omission-only local ASR
+OMISSION_PROBE_DIR = (
+    "work/omission_probe"
+)
 
-OUTPUT_SECONDARY_PASSES = "output/secondary_passes.json"
-OUTPUT_OMISSION_PROBE_PASSES = "output/omission_probe_passes.json"
+OMISSION_VERIFY_DIR = (
+    "work/omission_v2"
+)
 
-OUTPUT_RAW_SRT = "output/result_raw.srt"
-OUTPUT_CORRECTED_SRT = "output/result_corrected.srt"
+OMISSION_REALIGN_DIR = (
+    "work/omission_realign"
+)
+
+
+OUTPUT_RAW_JSON = (
+    "output/raw_transcript.json"
+)
+
+OUTPUT_CORRECTED_JSON = (
+    "output/corrected_transcript.json"
+)
+
+OUTPUT_CORRECTION_LOG = (
+    "output/correction_log.json"
+)
+
+OUTPUT_REVIEW_CANDIDATES = (
+    "output/review_candidates.json"
+)
+
+OUTPUT_OMISSION_CANDIDATES = (
+    "output/omission_candidates.json"
+)
+
+OUTPUT_OMISSION_LOG = (
+    "output/omission_log.json"
+)
+
+OUTPUT_OMISSION_REVIEW = (
+    "output/omission_review.json"
+)
+
+OUTPUT_OMISSION_REALIGN_LOG = (
+    "output/omission_realign_log.json"
+)
+
+OUTPUT_ALIGNMENT_SECONDARY_PASSES = (
+    "output/secondary_passes.json"
+)
+
+OUTPUT_OMISSION_PROBE_PASSES = (
+    "output/omission_probe_passes.json"
+)
+
+OUTPUT_RAW_SRT = (
+    "output/result_raw.srt"
+)
+
+OUTPUT_CORRECTED_SRT = (
+    "output/result_corrected.srt"
+)
 
 
 # =========================================================
@@ -145,7 +193,8 @@ def prepare_work_directory():
     for directory in [
         RECOVERY_DIR,
         ALIGN_DIR,
-        OMISSION_SECONDARY_DIR,
+        ALIGNMENT_SECONDARY_DIR,
+        OMISSION_PROBE_DIR,
         OMISSION_VERIFY_DIR,
         OMISSION_REALIGN_DIR,
     ]:
@@ -153,6 +202,7 @@ def prepare_work_directory():
         if os.path.exists(
             directory
         ):
+
             shutil.rmtree(
                 directory
             )
@@ -177,6 +227,7 @@ def save_json(
     )
 
     if directory:
+
         os.makedirs(
             directory,
             exist_ok=True,
@@ -204,14 +255,18 @@ def main():
 
     prepare_work_directory()
 
-    total_start = time.perf_counter()
+    total_start = (
+        time.perf_counter()
+    )
 
     # =====================================================
     # MEDIA
     # =====================================================
 
-    media_duration = get_media_duration(
-        INPUT_FILE
+    media_duration = (
+        get_media_duration(
+            INPUT_FILE
+        )
     )
 
     print()
@@ -225,7 +280,9 @@ def main():
     # AUDIO NORMALIZE
     # =====================================================
 
-    normalize_start = time.perf_counter()
+    normalize_start = (
+        time.perf_counter()
+    )
 
     normalize_audio(
         INPUT_FILE,
@@ -242,23 +299,27 @@ def main():
     # MODEL
     # =====================================================
 
-    whisper = WhisperEngine(
-        model_name=(
-            WHISPER_MODEL
-        ),
-        device=(
-            WHISPER_DEVICE
-        ),
-        compute_type=(
-            WHISPER_COMPUTE_TYPE
-        ),
+    whisper = (
+        WhisperEngine(
+            model_name=(
+                WHISPER_MODEL
+            ),
+            device=(
+                WHISPER_DEVICE
+            ),
+            compute_type=(
+                WHISPER_COMPUTE_TYPE
+            ),
+        )
     )
 
     # =====================================================
     # PRIMARY STT
     # =====================================================
 
-    primary_start = time.perf_counter()
+    primary_start = (
+        time.perf_counter()
+    )
 
     raw_primary = (
         whisper.transcribe_primary(
@@ -290,7 +351,9 @@ def main():
     # LONG + MICRO RECOVERY
     # =====================================================
 
-    long_start = time.perf_counter()
+    long_start = (
+        time.perf_counter()
+    )
 
     (
         repaired_primary,
@@ -332,26 +395,30 @@ def main():
     # GAP DETECTION
     # =====================================================
 
-    gaps = detect_transcript_gaps(
-        segments=(
-            repaired_primary
-        ),
-        media_duration=(
-            media_duration
-        ),
-        min_gap=(
-            MIN_RECOVERY_GAP
-        ),
-        ignored_intervals=(
-            handled_micro_intervals
-        ),
+    gaps = (
+        detect_transcript_gaps(
+            segments=(
+                repaired_primary
+            ),
+            media_duration=(
+                media_duration
+            ),
+            min_gap=(
+                MIN_RECOVERY_GAP
+            ),
+            ignored_intervals=(
+                handled_micro_intervals
+            ),
+        )
     )
 
     # =====================================================
     # GAP RECOVERY
     # =====================================================
 
-    gap_start = time.perf_counter()
+    gap_start = (
+        time.perf_counter()
+    )
 
     recovered_segments = (
         recover_gaps(
@@ -403,8 +470,12 @@ def main():
 
     merged_segments.sort(
         key=lambda item: (
-            item["start"],
-            item["end"],
+            item[
+                "start"
+            ],
+            item[
+                "end"
+            ],
         )
     )
 
@@ -438,12 +509,13 @@ def main():
     # =====================================================
     # ALIGNMENT SECONDARY ASR
     #
-    # IMPORTANT:
-    # Keep the currently proven stable implementation here.
-    # This is the v1 overlap-optimized secondary generator.
+    # Keep the stable v1 overlap-optimized implementation.
+    # Omission detection no longer consumes this directly.
     # =====================================================
 
-    secondary_start = time.perf_counter()
+    secondary_start = (
+        time.perf_counter()
+    )
 
     alignment_secondary_passes = (
         build_secondary_passes(
@@ -460,7 +532,7 @@ def main():
                 whisper
             ),
             work_dir=(
-                OMISSION_SECONDARY_DIR
+                ALIGNMENT_SECONDARY_DIR
             ),
             media_duration=(
                 media_duration
@@ -482,16 +554,16 @@ def main():
 
     save_json(
         alignment_secondary_passes,
-        OUTPUT_SECONDARY_PASSES,
+        OUTPUT_ALIGNMENT_SECONDARY_PASSES,
     )
 
     # =====================================================
     # SUBTITLE WORD ALIGNMENT
-    #
-    # Alignment owns alignment_secondary_passes.
     # =====================================================
 
-    alignment_start = time.perf_counter()
+    alignment_start = (
+        time.perf_counter()
+    )
 
     aligned_segments = (
         attach_word_timestamps_v3(
@@ -529,16 +601,10 @@ def main():
     )
 
     # =====================================================
-    # OMISSION PROBE PREPARATION
+    # OMISSION-SPECIFIC LOCAL ASR
     #
-    # Phase 3-A:
-    # create a logically independent omission input.
-    #
-    # For regression safety this currently copies the stable
-    # alignment evidence without running extra Whisper.
-    #
-    # Next phase will replace only omission_probe.py with
-    # targeted omission-specific ASR.
+    # This is now computationally independent from the
+    # alignment secondary passes.
     # =====================================================
 
     omission_probe_start = (
@@ -550,8 +616,17 @@ def main():
             segments=(
                 aligned_segments
             ),
-            alignment_secondary_passes=(
-                alignment_secondary_passes
+            normalized_audio=(
+                NORMALIZED_AUDIO
+            ),
+            whisper=(
+                whisper
+            ),
+            work_dir=(
+                OMISSION_PROBE_DIR
+            ),
+            media_duration=(
+                media_duration
             ),
         )
     )
@@ -570,14 +645,14 @@ def main():
     # =====================================================
     # OMISSION DETECTION
     #
-    # omission_v2 no longer receives the alignment variable
-    # directly. It consumes omission-specific evidence.
-    #
-    # Its argument name is still "secondary_passes" to keep
-    # the proven detector code unchanged in Phase 3-A.
+    # omission_v2.py remains unchanged.
+    # It receives omission-specific evidence in the same
+    # pass schema that it already understands.
     # =====================================================
 
-    omission_start = time.perf_counter()
+    omission_start = (
+        time.perf_counter()
+    )
 
     omission_candidates = (
         detect_omission_candidates_v2(
@@ -788,7 +863,9 @@ def main():
 
     else:
 
-        for item in omission_log:
+        for item in (
+            omission_log
+        ):
 
             print()
 
@@ -808,8 +885,10 @@ def main():
                 f"{item['inserted_text']}"
             )
 
-            probability = item.get(
-                "probability"
+            probability = (
+                item.get(
+                    "probability"
+                )
             )
 
             if probability is not None:
@@ -852,7 +931,9 @@ def main():
 
     else:
 
-        for item in omission_realign_log:
+        for item in (
+            omission_realign_log
+        ):
 
             print()
 
@@ -905,7 +986,9 @@ def main():
 
     else:
 
-        for item in correction_log:
+        for item in (
+            correction_log
+        ):
 
             print()
 
@@ -925,9 +1008,11 @@ def main():
                 f"{item['corrected_text']}"
             )
 
-            for rule in item.get(
-                "rules",
-                [],
+            for rule in (
+                item.get(
+                    "rules",
+                    [],
+                )
             ):
 
                 print(
@@ -955,7 +1040,9 @@ def main():
 
     else:
 
-        for item in review_candidates:
+        for item in (
+            review_candidates
+        ):
 
             print()
 
@@ -1050,7 +1137,7 @@ def main():
     )
 
     print(
-        f"Secondary ASR      : "
+        f"Alignment secondary: "
         f"{secondary_time:.2f} sec"
     )
 
@@ -1060,8 +1147,8 @@ def main():
     )
 
     print(
-        f"Omission probe prep: "
-        f"{omission_probe_time:.4f} sec"
+        f"Omission probe ASR : "
+        f"{omission_probe_time:.2f} sec"
     )
 
     print(
@@ -1180,7 +1267,7 @@ def main():
 
     print(
         f"Alignment passes   : "
-        f"{OUTPUT_SECONDARY_PASSES}"
+        f"{OUTPUT_ALIGNMENT_SECONDARY_PASSES}"
     )
 
     print(
