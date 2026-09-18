@@ -81,6 +81,90 @@ CONFIRMED_CORRECTION_GROUPS = [
 
 # =========================================================
 # LEVEL 2
+# CONTEXTUAL HIGH-CONFIDENCE AUTO CORRECTIONS
+# =========================================================
+#
+# These are NOT unconditional replacements.
+#
+# A variant is automatically corrected only when:
+#   1. the suspect variant is present in the segment, and
+#   2. the surrounding context contains enough domain signals.
+#
+# If the context condition is not satisfied, the text is left
+# untouched and the existing REVIEW_TERM_GROUPS logic can still
+# surface it for manual review.
+#
+# This keeps confirmed corrections and contextual corrections
+# clearly separated.
+# =========================================================
+
+CONTEXTUAL_AUTO_CORRECTION_GROUPS = [
+
+    {
+        "canonical": "절삭유",
+
+        "variants": [
+            "절사규",
+            "절사기",
+            "절사유",
+            "절삭규",
+        ],
+
+        "context_keywords": [
+            "금속",
+            "가공",
+            "마찰",
+            "열",
+            "기름",
+            "유증기",
+            "바닥",
+            "공장",
+            "절삭",
+        ],
+
+        "min_context_hits": 1,
+
+        "confidence": 0.97,
+
+        "reason": (
+            "금속 가공·마찰·열·기름·유증기 등 "
+            "절삭유 문맥이 확인된 경우에만 자동 교정."
+        ),
+    },
+
+    {
+        "canonical": "불쏘시개",
+
+        "variants": [
+            "불쏘식",
+            "불쏘시계",
+            "불쏘시게",
+        ],
+
+        "context_keywords": [
+            "화재",
+            "점화",
+            "연소",
+            "유증기",
+            "기름",
+            "역할",
+            "불",
+        ],
+
+        "min_context_hits": 2,
+
+        "confidence": 0.96,
+
+        "reason": (
+            "화재·점화·연소·유증기·역할 등 "
+            "불쏘시개 문맥이 복수 확인된 경우에만 자동 교정."
+        ),
+    },
+]
+
+
+# =========================================================
+# LEVEL 3
 # REVIEW-ONLY DOMAIN TERMS
 # =========================================================
 
@@ -337,6 +421,210 @@ def apply_confirmed_corrections(
             )
         )
     )
+
+    item[
+        "text"
+    ] = (
+        corrected_text
+    )
+
+    return (
+        item,
+        applied_rules,
+    )
+
+
+# =========================================================
+# CONTEXTUAL AUTO CORRECTION
+# =========================================================
+
+def count_context_keyword_hits(
+    context: str,
+    keywords: list[str],
+) -> tuple[
+    int,
+    list[str],
+]:
+
+    normalized_context = (
+        normalize_text(
+            context
+        )
+    )
+
+    matched = []
+
+    for keyword in keywords:
+
+        normalized_keyword = (
+            normalize_text(
+                keyword
+            )
+        )
+
+        if not normalized_keyword:
+            continue
+
+        if (
+            normalized_keyword
+            in
+            normalized_context
+        ):
+
+            matched.append(
+                keyword
+            )
+
+    return (
+        len(
+            matched
+        ),
+        matched,
+    )
+
+
+def apply_contextual_domain_corrections(
+    segment: dict,
+    context: str,
+) -> tuple[
+    dict,
+    list[dict],
+]:
+    """
+    Apply high-confidence domain corrections only when the
+    configured context requirements are satisfied.
+
+    If requirements fail, no replacement occurs. The remaining
+    suspect token can then be emitted by REVIEW_TERM_GROUPS.
+    """
+
+    item = (
+        copy.deepcopy(
+            segment
+        )
+    )
+
+    corrected_text = str(
+        item.get(
+            "text",
+            "",
+        )
+    ).strip()
+
+    applied_rules = []
+
+    for group in (
+        CONTEXTUAL_AUTO_CORRECTION_GROUPS
+    ):
+
+        canonical = (
+            group[
+                "canonical"
+            ]
+        )
+
+        context_keywords = (
+            group.get(
+                "context_keywords",
+                [],
+            )
+        )
+
+        min_context_hits = int(
+            group.get(
+                "min_context_hits",
+                1,
+            )
+        )
+
+        confidence = float(
+            group.get(
+                "confidence",
+                0.95,
+            )
+        )
+
+        reason = str(
+            group.get(
+                "reason",
+                "",
+            )
+        )
+
+        (
+            context_hit_count,
+            matched_keywords,
+        ) = (
+            count_context_keyword_hits(
+                context=(
+                    context
+                ),
+                keywords=(
+                    context_keywords
+                ),
+            )
+        )
+
+        if (
+            context_hit_count
+            <
+            min_context_hits
+        ):
+            continue
+
+        for variant in (
+            group[
+                "variants"
+            ]
+        ):
+
+            if (
+                variant
+                not in
+                corrected_text
+            ):
+                continue
+
+            corrected_text = (
+                corrected_text.replace(
+                    variant,
+                    canonical,
+                )
+            )
+
+            applied_rules.append(
+                {
+                    "from": (
+                        variant
+                    ),
+
+                    "to": (
+                        canonical
+                    ),
+
+                    "reason": (
+                        reason
+                    ),
+
+                    "mode": (
+                        "contextual_auto"
+                    ),
+
+                    "confidence": (
+                        confidence
+                    ),
+
+                    "context_hits": (
+                        context_hit_count
+                    ),
+
+                    "matched_keywords": (
+                        copy.deepcopy(
+                            matched_keywords
+                        )
+                    ),
+                }
+            )
 
     item[
         "text"
@@ -818,12 +1106,16 @@ def correct_segments(
 
     review_candidates = []
 
+    rules_by_index = {}
+
     # =====================================================
     # PASS 1
-    # AUTO CORRECTION
+    # CONFIRMED AUTO CORRECTION
     # =====================================================
 
-    for segment in segments:
+    for index, segment in enumerate(
+        segments
+    ):
 
         (
             corrected_item,
@@ -838,8 +1130,92 @@ def correct_segments(
             corrected_item
         )
 
-        if not applied_rules:
-            continue
+        if applied_rules:
+
+            rules_by_index[
+                index
+            ] = (
+                copy.deepcopy(
+                    applied_rules
+                )
+            )
+
+    # =====================================================
+    # PASS 2
+    # CONTEXTUAL HIGH-CONFIDENCE AUTO CORRECTION
+    #
+    # Context is built from the confirmed-correction result.
+    # This means known corrections such as "증축" can help
+    # contextual decisions without altering the source timing.
+    # =====================================================
+
+    contextual_base = (
+        copy.deepcopy(
+            corrected_segments
+        )
+    )
+
+    for index, segment in enumerate(
+        contextual_base
+    ):
+
+        context = (
+            build_context(
+                segments=(
+                    contextual_base
+                ),
+                index=(
+                    index
+                ),
+                radius=1,
+            )
+        )
+
+        (
+            contextual_item,
+            contextual_rules,
+        ) = (
+            apply_contextual_domain_corrections(
+                segment=(
+                    segment
+                ),
+                context=(
+                    context
+                ),
+            )
+        )
+
+        corrected_segments[
+            index
+        ] = (
+            contextual_item
+        )
+
+        if contextual_rules:
+
+            rules_by_index.setdefault(
+                index,
+                [],
+            ).extend(
+                contextual_rules
+            )
+
+    # =====================================================
+    # BUILD CORRECTION LOG
+    #
+    # One log entry per corrected segment, preserving the
+    # original raw_text and grouping all rules that affected it.
+    # =====================================================
+
+    for index in sorted(
+        rules_by_index
+    ):
+
+        corrected_item = (
+            corrected_segments[
+                index
+            ]
+        )
 
         correction_log.append(
             {
@@ -863,9 +1239,17 @@ def correct_segments(
                 ),
 
                 "raw_text": (
-                    corrected_item[
-                        "raw_text"
-                    ]
+                    corrected_item.get(
+                        "raw_text",
+                        str(
+                            segments[
+                                index
+                            ].get(
+                                "text",
+                                "",
+                            )
+                        ).strip(),
+                    )
                 ),
 
                 "corrected_text": (
@@ -875,7 +1259,11 @@ def correct_segments(
                 ),
 
                 "rules": (
-                    applied_rules
+                    copy.deepcopy(
+                        rules_by_index[
+                            index
+                        ]
+                    )
                 ),
 
                 "action": (
@@ -885,8 +1273,12 @@ def correct_segments(
         )
 
     # =====================================================
-    # PASS 2
+    # PASS 3
     # REVIEW
+    #
+    # Any contextual candidate that was NOT safe enough for
+    # auto correction remains in the text and is still caught
+    # here as a review-only candidate.
     # =====================================================
 
     for index, segment in enumerate(
@@ -938,3 +1330,4 @@ def correct_segments(
         correction_log,
         review_candidates,
     )
+
