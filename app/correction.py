@@ -163,8 +163,167 @@ CONTEXTUAL_AUTO_CORRECTION_GROUPS = [
 ]
 
 
+
 # =========================================================
 # LEVEL 3
+# SAFE SPACING NORMALIZATION
+# =========================================================
+#
+# This is intentionally NOT a general Korean spacing corrector.
+#
+# We only fix exact, repeatedly observed concatenation patterns
+# that are highly unlikely to change meaning.
+#
+# Important:
+# - text only is changed
+# - word timestamps are preserved
+# - proper nouns / organization names / technical terms are
+#   not split by generic heuristics
+# - every applied spacing rule is written to correction_log
+# =========================================================
+
+SAFE_SPACING_RULES = [
+
+    {
+        "from": "라인에대해서",
+        "to": "라인에 대해서",
+        "reason": (
+            "조사 결합 과정에서 붙은 명백한 어절 경계를 복원."
+        ),
+    },
+
+    {
+        "from": "시설물에대해서",
+        "to": "시설물에 대해서",
+        "reason": (
+            "조사 결합 과정에서 붙은 명백한 어절 경계를 복원."
+        ),
+    },
+
+    {
+        "from": "구조물에대해서",
+        "to": "구조물에 대해서",
+        "reason": (
+            "조사 결합 과정에서 붙은 명백한 어절 경계를 복원."
+        ),
+    },
+
+    {
+        "from": "안전에관련된",
+        "to": "안전에 관련된",
+        "reason": (
+            "의존 표현 '관련된' 앞의 명백한 어절 경계를 복원."
+        ),
+    },
+
+    {
+        "from": "으로인해",
+        "to": "으로 인해",
+        "reason": (
+            "의존 표현 '인해' 앞의 명백한 어절 경계를 복원."
+        ),
+    },
+
+    {
+        "from": "인해서사실상",
+        "to": "인해서 사실상",
+        "reason": (
+            "문장 내부에서 붙은 명백한 어절 경계를 복원."
+        ),
+    },
+
+    {
+        "from": "건축법이나소방법",
+        "to": "건축법이나 소방법",
+        "reason": (
+            "병렬 명사 사이의 명백한 어절 경계를 복원."
+        ),
+    },
+
+    {
+        "from": "적법하게맞춰주지",
+        "to": "적법하게 맞춰주지",
+        "reason": (
+            "부사와 용언 사이의 명백한 어절 경계를 복원."
+        ),
+    },
+
+    {
+        "from": "대피가어려웠",
+        "to": "대피가 어려웠",
+        "reason": (
+            "주어와 서술어 사이의 명백한 어절 경계를 복원."
+        ),
+    },
+
+    {
+        "from": "피해자가대피",
+        "to": "피해자가 대피",
+        "reason": (
+            "주어와 용언 사이의 명백한 어절 경계를 복원."
+        ),
+    },
+
+    {
+        "from": "살펴볼예정",
+        "to": "살펴볼 예정",
+        "reason": (
+            "관형형과 의존 명사 '예정' 사이의 어절 경계를 복원."
+        ),
+    },
+
+    {
+        "from": "된원인",
+        "to": "된 원인",
+        "reason": (
+            "관형형과 명사 사이의 명백한 어절 경계를 복원."
+        ),
+    },
+
+    {
+        "from": "여러가지",
+        "to": "여러 가지",
+        "reason": (
+            "고정적으로 확인된 띄어쓰기 형태를 적용."
+        ),
+    },
+
+    {
+        "from": "결합하면서불쏘시개",
+        "to": "결합하면서 불쏘시개",
+        "reason": (
+            "연결 어미 뒤에 붙은 독립 명사의 어절 경계를 복원."
+        ),
+    },
+
+    {
+        "from": "결합하면서불쏘식",
+        "to": "결합하면서 불쏘식",
+        "reason": (
+            "연결 어미 뒤에 붙은 독립 명사의 어절 경계를 복원."
+        ),
+    },
+
+    {
+        "from": "절삭유가흥건",
+        "to": "절삭유가 흥건",
+        "reason": (
+            "주어와 서술어 사이의 명백한 어절 경계를 복원."
+        ),
+    },
+
+    {
+        "from": "절사규가흥건",
+        "to": "절사규가 흥건",
+        "reason": (
+            "주어와 서술어 사이의 명백한 어절 경계를 복원."
+        ),
+    },
+]
+
+
+# =========================================================
+# LEVEL 4
 # REVIEW-ONLY DOMAIN TERMS
 # =========================================================
 
@@ -625,6 +784,106 @@ def apply_contextual_domain_corrections(
                     ),
                 }
             )
+
+    item[
+        "text"
+    ] = (
+        corrected_text
+    )
+
+    return (
+        item,
+        applied_rules,
+    )
+
+
+# =========================================================
+# SAFE SPACING NORMALIZATION
+# =========================================================
+
+def apply_safe_spacing_normalization(
+    segment: dict,
+) -> tuple[
+    dict,
+    list[dict],
+]:
+    """
+    Apply only exact, high-confidence spacing repairs.
+
+    This function deliberately avoids morphology-based or
+    language-model-based spacing correction.  It changes only
+    segment["text"]; segment word timestamps remain untouched.
+    """
+
+    item = (
+        copy.deepcopy(
+            segment
+        )
+    )
+
+    corrected_text = str(
+        item.get(
+            "text",
+            "",
+        )
+    ).strip()
+
+    applied_rules = []
+
+    for rule in (
+        SAFE_SPACING_RULES
+    ):
+
+        source_text = str(
+            rule[
+                "from"
+            ]
+        )
+
+        target_text = str(
+            rule[
+                "to"
+            ]
+        )
+
+        if (
+            source_text
+            not in
+            corrected_text
+        ):
+            continue
+
+        corrected_text = (
+            corrected_text.replace(
+                source_text,
+                target_text,
+            )
+        )
+
+        applied_rules.append(
+            {
+                "from": (
+                    source_text
+                ),
+
+                "to": (
+                    target_text
+                ),
+
+                "reason": (
+                    str(
+                        rule.get(
+                            "reason",
+                            "Safe spacing normalization.",
+                        )
+                    )
+                ),
+
+                "mode": (
+                    "safe_spacing"
+                ),
+            }
+        )
 
     item[
         "text"
@@ -1201,6 +1460,42 @@ def correct_segments(
             )
 
     # =====================================================
+    # PASS 3
+    # SAFE SPACING NORMALIZATION
+    #
+    # Only exact high-confidence concatenation patterns are
+    # repaired here.  Word timestamps are intentionally kept.
+    # =====================================================
+
+    for index, segment in enumerate(
+        corrected_segments
+    ):
+
+        (
+            spacing_item,
+            spacing_rules,
+        ) = (
+            apply_safe_spacing_normalization(
+                segment
+            )
+        )
+
+        corrected_segments[
+            index
+        ] = (
+            spacing_item
+        )
+
+        if spacing_rules:
+
+            rules_by_index.setdefault(
+                index,
+                [],
+            ).extend(
+                spacing_rules
+            )
+
+    # =====================================================
     # BUILD CORRECTION LOG
     #
     # One log entry per corrected segment, preserving the
@@ -1273,7 +1568,7 @@ def correct_segments(
         )
 
     # =====================================================
-    # PASS 3
+    # PASS 4
     # REVIEW
     #
     # Any contextual candidate that was NOT safe enough for
