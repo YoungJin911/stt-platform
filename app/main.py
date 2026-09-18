@@ -28,8 +28,8 @@ from app.alignment import (
     attach_word_timestamps_v3,
 )
 
-from app.omission_secondary import (
-    build_secondary_passes,
+from app.alignment_secondary import (
+    build_secondary_passes as build_alignment_secondary_passes,
 )
 
 from app.omission_probe import (
@@ -509,8 +509,8 @@ def main():
     # =====================================================
     # ALIGNMENT SECONDARY ASR
     #
-    # Keep the stable v1 overlap-optimized implementation.
-    # Omission detection no longer consumes this directly.
+    # Full-audio word timeline, one ASR pass.
+    # Omission detection is independent and uses omission_probe.py.
     # =====================================================
 
     secondary_start = (
@@ -518,7 +518,7 @@ def main():
     )
 
     alignment_secondary_passes = (
-        build_secondary_passes(
+        build_alignment_secondary_passes(
             segments=(
                 final_raw_segments
             ),
