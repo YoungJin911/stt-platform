@@ -8,10 +8,6 @@ from difflib import SequenceMatcher
 # CONFIG
 # =========================================================
 
-#
-# canonical token의 문자 중 최소 이 비율 이상이
-# alignment word와 대응되어야 실제 word timing을 신뢰
-#
 MIN_TOKEN_MATCH_RATIO = 0.45
 
 
@@ -19,41 +15,78 @@ MIN_TOKEN_MATCH_RATIO = 0.45
 # CUE TIMING
 # =========================================================
 
-#
-# 일반 cue 최소 표시 시간
-#
 MIN_CUE_DURATION = 0.60
-
-#
-# cue 사이 최소 간격
-#
 MIN_CUE_GAP = 0.02
+
+# 실제 발화 사이 공백이 이 이상이면 강제로 cue를 분리
+MAX_INTER_TOKEN_GAP = 1.20
+
+# cue가 너무 짧을 때 의미 단위 분리를 억제
+MIN_SEMANTIC_CUE_CHARS = 12
+MIN_SEMANTIC_CUE_DURATION = 1.20
+
+# 사람이 읽기 편한 평균 cue 지속시간 목표
+TARGET_CUE_DURATION = 3.40
+
+# hard limit 직전 breakpoint 탐색 시 너무 짧은 앞 조각 방지
+MIN_BREAK_CHARS = 10
+MIN_BREAK_DURATION = 1.00
+
+
+# =========================================================
+# KOREAN SEMANTIC BREAK HINTS
+# =========================================================
+
+SENTENCE_END_PATTERN = re.compile(
+    r"[.!?。！？]$"
+)
+
+# 이 어절 뒤는 의미 단위 경계가 되기 쉬움.
+# 완전한 형태소 분석기가 아니라 "힌트"로만 사용한다.
+PREFERRED_BREAK_SUFFIXES = (
+    "하고",
+    "하며",
+    "하면서",
+    "했으며",
+    "됐으며",
+    "되며",
+    "한편",
+    "따라",
+    "위해",
+    "때문에",
+    "경우",
+    "반면",
+)
+
+# 다음 어절이 이런 담화 표지이면 그 직전에 끊는 것이 자연스러운 경우가 많음.
+PREFERRED_NEXT_PREFIXES = (
+    "또",
+    "또한",
+    "이에",
+    "다만",
+    "하지만",
+    "그러나",
+    "그리고",
+    "한편",
+    "특히",
+    "반면",
+    "따라서",
+)
+
+# 짧은 명사/수식어가 바로 뒤 어절과 매우 촘촘히 붙어 있으면
+# 중간 분리를 강하게 억제한다.
+SHORT_PAIR_MAX_GAP = 0.16
+SHORT_PAIR_MAX_LEFT_CHARS = 2
+SHORT_PAIR_MAX_RIGHT_CHARS = 4
 
 
 # =========================================================
 # SHORT CUE MERGE
 # =========================================================
 
-#
-# 이 시간보다 짧으면 병합 후보
-#
 SHORT_CUE_DURATION = 1.00
-
-#
-# 이 단어 수 이하일 때만 병합 후보
-#
 SHORT_CUE_MAX_WORDS = 2
-
-#
-# 짧은 cue 병합 시 일반 max duration보다
-# 약간 길어지는 것은 허용한다.
-#
 SHORT_MERGE_MAX_DURATION = 6.50
-
-#
-# 병합 후 글자 수도 일반 max_chars보다
-# 약간 길게 허용
-#
 SHORT_MERGE_EXTRA_CHARS = 8
 
 
@@ -119,10 +152,43 @@ def has_sentence_end(
         return False
 
     return bool(
-        re.search(
-            r"[.!?。！？]$",
-            text,
+        SENTENCE_END_PATTERN.search(
+            text
         )
+    )
+
+
+def clean_token_text(
+    text: str,
+) -> str:
+
+    return re.sub(
+        r"[.!?。！？,，:;\"'“”‘’()\[\]{}]",
+        "",
+        str(
+            text or ""
+        ).strip(),
+    )
+
+
+def displayed_text(
+    tokens: list[dict],
+) -> str:
+
+    return " ".join(
+        str(
+            token.get(
+                "text",
+                "",
+            )
+        ).strip()
+        for token in tokens
+        if str(
+            token.get(
+                "text",
+                "",
+            )
+        ).strip()
     )
 
 
@@ -135,7 +201,6 @@ def collect_global_words(
 ) -> list[dict]:
 
     collected = []
-
     seen = set()
 
     for segment in segments:
@@ -152,17 +217,14 @@ def collect_global_words(
                 )
             ).strip()
 
-            normalized = (
-                normalize_text(
-                    text
-                )
+            normalized = normalize_text(
+                text
             )
 
             if not normalized:
                 continue
 
             try:
-
                 start = float(
                     word[
                         "start"
@@ -180,28 +242,20 @@ def collect_global_words(
                 TypeError,
                 ValueError,
             ):
-
                 continue
 
             if end <= start:
                 continue
-
-            #
-            # overlapping batch 때문에 동일 word가
-            # 여러 segment에 복제될 수 있으므로 dedupe
-            #
 
             key = (
                 round(
                     start,
                     2,
                 ),
-
                 round(
                     end,
                     2,
                 ),
-
                 normalized,
             )
 
@@ -214,26 +268,12 @@ def collect_global_words(
 
             collected.append(
                 {
-                    "start": (
-                        start
-                    ),
-
-                    "end": (
-                        end
-                    ),
-
-                    "word": (
-                        text
-                    ),
-
-                    "normalized": (
-                        normalized
-                    ),
-
-                    "probability": (
-                        word.get(
-                            "probability"
-                        )
+                    "start": start,
+                    "end": end,
+                    "word": text,
+                    "normalized": normalized,
+                    "probability": word.get(
+                        "probability"
                     ),
                 }
             )
@@ -264,9 +304,7 @@ def build_canonical_tokens(
 ]:
 
     tokens = []
-
     char_cursor = 0
-
     canonical_chars = []
 
     for segment_index, segment in enumerate(
@@ -280,28 +318,22 @@ def build_canonical_tokens(
             )
         ).strip()
 
-        segment_tokens = (
-            split_text_tokens(
-                text
-            )
+        segment_tokens = split_text_tokens(
+            text
         )
 
         for token_index, token in enumerate(
             segment_tokens
         ):
 
-            normalized = (
-                normalize_text(
-                    token
-                )
+            normalized = normalize_text(
+                token
             )
 
             if not normalized:
                 continue
 
-            char_start = (
-                char_cursor
-            )
+            char_start = char_cursor
 
             canonical_chars.append(
                 normalized
@@ -311,51 +343,20 @@ def build_canonical_tokens(
                 normalized
             )
 
-            char_end = (
-                char_cursor
-            )
+            char_end = char_cursor
 
             tokens.append(
                 {
-                    "segment_index": (
-                        segment_index
-                    ),
-
-                    "token_index": (
-                        token_index
-                    ),
-
-                    "text": (
-                        token
-                    ),
-
-                    "normalized": (
-                        normalized
-                    ),
-
-                    "char_start": (
-                        char_start
-                    ),
-
-                    "char_end": (
-                        char_end
-                    ),
-
-                    "start": (
-                        None
-                    ),
-
-                    "end": (
-                        None
-                    ),
-
-                    "matched_chars": (
-                        0
-                    ),
-
-                    "matched_word_indices": (
-                        set()
-                    ),
+                    "segment_index": segment_index,
+                    "token_index": token_index,
+                    "text": token,
+                    "normalized": normalized,
+                    "char_start": char_start,
+                    "char_end": char_end,
+                    "start": None,
+                    "end": None,
+                    "matched_chars": 0,
+                    "matched_word_indices": set(),
                 }
             )
 
@@ -379,18 +380,15 @@ def build_secondary_char_map(
 ]:
 
     chars = []
-
     char_to_word = []
 
     for word_index, word in enumerate(
         words
     ):
 
-        normalized = (
-            word[
-                "normalized"
-            ]
-        )
+        normalized = word[
+            "normalized"
+        ]
 
         for character in normalized:
 
@@ -406,7 +404,6 @@ def build_secondary_char_map(
         "".join(
             chars
         ),
-
         char_to_word,
     )
 
@@ -430,10 +427,8 @@ def align_canonical_to_words(
     (
         secondary_text,
         secondary_char_to_word,
-    ) = (
-        build_secondary_char_map(
-            global_words
-        )
+    ) = build_secondary_char_map(
+        global_words
     )
 
     if not secondary_text:
@@ -448,9 +443,7 @@ def align_canonical_to_words(
 
     canonical_to_secondary = {}
 
-    for block in (
-        matcher.get_matching_blocks()
-    ):
+    for block in matcher.get_matching_blocks():
 
         if block.size <= 0:
             continue
@@ -473,32 +466,19 @@ def align_canonical_to_words(
 
             canonical_to_secondary[
                 canonical_position
-            ] = (
-                secondary_position
-            )
+            ] = secondary_position
 
-    # =====================================================
-    # TOKEN -> ACTUAL WORD TIMESTAMP
-    # =====================================================
+    for token in canonical_tokens:
 
-    for token in (
-        canonical_tokens
-    ):
+        char_start = token[
+            "char_start"
+        ]
 
-        char_start = (
-            token[
-                "char_start"
-            ]
-        )
-
-        char_end = (
-            token[
-                "char_end"
-            ]
-        )
+        char_end = token[
+            "char_end"
+        ]
 
         matched_word_indices = []
-
         matched_chars = 0
 
         for canonical_position in range(
@@ -512,10 +492,7 @@ def align_canonical_to_words(
                 )
             )
 
-            if (
-                secondary_position
-                is None
-            ):
+            if secondary_position is None:
                 continue
 
             if (
@@ -554,9 +531,7 @@ def align_canonical_to_words(
 
         token[
             "matched_chars"
-        ] = (
-            matched_chars
-        )
+        ] = matched_chars
 
         if (
             match_ratio
@@ -646,16 +621,11 @@ def interpolate_missing_token_times(
             ]
             is not None
         ):
-
-            current = (
-                index
-            )
+            current = index
 
         previous_anchor[
             index
-        ] = (
-            current
-        )
+        ] = current
 
     current = None
 
@@ -669,11 +639,9 @@ def interpolate_missing_token_times(
         -1,
     ):
 
-        token = (
-            tokens[
-                index
-            ]
-        )
+        token = tokens[
+            index
+        ]
 
         if (
             token[
@@ -686,20 +654,11 @@ def interpolate_missing_token_times(
             ]
             is not None
         ):
-
-            current = (
-                index
-            )
+            current = index
 
         next_anchor[
             index
-        ] = (
-            current
-        )
-
-    # =====================================================
-    # SEGMENT-BY-SEGMENT
-    # =====================================================
+        ] = current
 
     for segment_index, segment in enumerate(
         segments
@@ -725,8 +684,12 @@ def interpolate_missing_token_times(
 
         position = 0
 
-        while position < len(
-            segment_token_indices
+        while (
+            position
+            <
+            len(
+                segment_token_indices
+            )
         ):
 
             token_index = (
@@ -735,11 +698,9 @@ def interpolate_missing_token_times(
                 ]
             )
 
-            token = (
-                tokens[
-                    token_index
-                ]
-            )
+            token = tokens[
+                token_index
+            ]
 
             if (
                 token[
@@ -747,14 +708,10 @@ def interpolate_missing_token_times(
                 ]
                 is not None
             ):
-
                 position += 1
-
                 continue
 
-            run_start_position = (
-                position
-            )
+            run_start_position = position
 
             while (
                 position
@@ -778,7 +735,6 @@ def interpolate_missing_token_times(
                     ]
                     is not None
                 ):
-
                     break
 
                 position += 1
@@ -796,17 +752,13 @@ def interpolate_missing_token_times(
                 ]
             )
 
-            first_run_index = (
-                run_indices[
-                    0
-                ]
-            )
+            first_run_index = run_indices[
+                0
+            ]
 
-            last_run_index = (
-                run_indices[
-                    -1
-                ]
-            )
+            last_run_index = run_indices[
+                -1
+            ]
 
             previous_index = (
                 previous_anchor[
@@ -820,10 +772,6 @@ def interpolate_missing_token_times(
                 ]
             )
 
-            # =================================================
-            # LEFT ANCHOR
-            # =================================================
-
             if (
                 previous_index
                 is not None
@@ -832,7 +780,6 @@ def interpolate_missing_token_times(
                 <
                 first_run_index
             ):
-
                 left_time = float(
                     tokens[
                         previous_index
@@ -840,21 +787,12 @@ def interpolate_missing_token_times(
                         "end"
                     ]
                 )
-
             else:
-
                 left_time = float(
                     segment[
                         "start"
                     ]
                 )
-
-            # =================================================
-            # RIGHT ANCHOR
-            #
-            # 다음 canonical segment의 실제 word timing도
-            # anchor로 사용할 수 있다.
-            # =================================================
 
             if (
                 next_index
@@ -864,7 +802,6 @@ def interpolate_missing_token_times(
                 >
                 last_run_index
             ):
-
                 right_time = float(
                     tokens[
                         next_index
@@ -872,9 +809,7 @@ def interpolate_missing_token_times(
                         "start"
                     ]
                 )
-
             else:
-
                 right_time = float(
                     segment[
                         "end"
@@ -886,14 +821,12 @@ def interpolate_missing_token_times(
                 <=
                 left_time
             ):
-
                 right_time = max(
                     float(
                         segment[
                             "end"
                         ]
                     ),
-
                     left_time
                     +
                     (
@@ -918,7 +851,8 @@ def interpolate_missing_token_times(
                         )
                     ),
                 )
-                for index in run_indices
+                for index
+                in run_indices
             ]
 
             total_weight = sum(
@@ -932,9 +866,7 @@ def interpolate_missing_token_times(
                 left_time,
             )
 
-            cursor = (
-                left_time
-            )
+            cursor = left_time
 
             for (
                 run_index,
@@ -963,9 +895,7 @@ def interpolate_missing_token_times(
                     run_index
                 ][
                     "start"
-                ] = (
-                    cursor
-                )
+                ] = cursor
 
                 tokens[
                     run_index
@@ -977,9 +907,7 @@ def interpolate_missing_token_times(
                     duration
                 )
 
-                cursor += (
-                    duration
-                )
+                cursor += duration
 
 
 # =========================================================
@@ -990,17 +918,10 @@ def sanitize_token_times(
     tokens: list[dict],
 ):
 
-    previous_start = (
-        0.0
-    )
+    previous_start = 0.0
+    previous_end = 0.0
 
-    previous_end = (
-        0.0
-    )
-
-    for token in (
-        tokens
-    ):
+    for token in tokens:
 
         if (
             token[
@@ -1008,12 +929,9 @@ def sanitize_token_times(
             ]
             is None
         ):
-
             token[
                 "start"
-            ] = (
-                previous_end
-            )
+            ] = previous_end
 
         if (
             token[
@@ -1021,7 +939,6 @@ def sanitize_token_times(
             ]
             is None
         ):
-
             token[
                 "end"
             ] = (
@@ -1049,13 +966,9 @@ def sanitize_token_times(
             <
             previous_start
         ):
-
-            start = (
-                previous_start
-            )
+            start = previous_start
 
         if end < start:
-
             end = (
                 start
                 +
@@ -1064,20 +977,13 @@ def sanitize_token_times(
 
         token[
             "start"
-        ] = (
-            start
-        )
+        ] = start
 
         token[
             "end"
-        ] = (
-            end
-        )
+        ] = end
 
-        previous_start = (
-            start
-        )
-
+        previous_start = start
         previous_end = max(
             previous_end,
             end,
@@ -1085,108 +991,385 @@ def sanitize_token_times(
 
 
 # =========================================================
-# CUE SPLITTING
+# SEMANTIC BREAK SCORING
 # =========================================================
 
-def should_break_cue(
-    current_tokens: list[dict],
-    next_token: dict,
-    target_chars: int,
-    max_chars: int,
-    max_cue_duration: float,
-) -> bool:
+def token_gap(
+    left_token: dict,
+    right_token: dict,
+) -> float:
 
-    if not current_tokens:
-        return False
-
-    current_text = " ".join(
-        token[
-            "text"
-        ]
-        for token
-        in current_tokens
-    )
-
-    candidate_text = (
-        current_text
-        +
-        " "
-        +
-        next_token[
-            "text"
-        ]
-    ).strip()
-
-    candidate_start = float(
-        current_tokens[
-            0
-        ][
-            "start"
-        ]
-    )
-
-    candidate_end = float(
-        next_token[
-            "end"
-        ]
-    )
-
-    candidate_duration = (
-        candidate_end
-        -
-        candidate_start
-    )
-
-    # =====================================================
-    # HARD LIMIT
-    # =====================================================
-
-    if (
-        len(
-            candidate_text
-        )
-        >
-        max_chars
-    ):
-
-        return True
-
-    if (
-        candidate_duration
-        >
-        max_cue_duration
-    ):
-
-        return True
-
-    # =====================================================
-    # NATURAL SENTENCE BREAK
-    # =====================================================
-
-    if (
-        len(
-            current_text
-        )
-        >=
-        target_chars
-    ):
-
-        last_text = (
-            current_tokens[
-                -1
-            ][
-                "text"
+    return max(
+        0.0,
+        float(
+            right_token[
+                "start"
             ]
         )
+        -
+        float(
+            left_token[
+                "end"
+            ]
+        ),
+    )
 
-        if has_sentence_end(
-            last_text
+
+def is_preferred_break_suffix(
+    text: str,
+) -> bool:
+
+    cleaned = clean_token_text(
+        text
+    )
+
+    if not cleaned:
+        return False
+
+    return any(
+        cleaned.endswith(
+            suffix
+        )
+        for suffix
+        in PREFERRED_BREAK_SUFFIXES
+    )
+
+
+def is_preferred_next_prefix(
+    text: str,
+) -> bool:
+
+    cleaned = clean_token_text(
+        text
+    )
+
+    if not cleaned:
+        return False
+
+    return any(
+        cleaned.startswith(
+            prefix
+        )
+        for prefix
+        in PREFERRED_NEXT_PREFIXES
+    )
+
+
+def is_tight_short_pair(
+    left_token: dict,
+    right_token: dict,
+) -> bool:
+
+    left_text = clean_token_text(
+        left_token.get(
+            "text",
+            "",
+        )
+    )
+
+    right_text = clean_token_text(
+        right_token.get(
+            "text",
+            "",
+        )
+    )
+
+    if not left_text:
+        return False
+
+    if not right_text:
+        return False
+
+    gap = token_gap(
+        left_token,
+        right_token,
+    )
+
+    return (
+        gap
+        <=
+        SHORT_PAIR_MAX_GAP
+        and
+        len(
+            normalize_text(
+                left_text
+            )
+        )
+        <=
+        SHORT_PAIR_MAX_LEFT_CHARS
+        and
+        len(
+            normalize_text(
+                right_text
+            )
+        )
+        <=
+        SHORT_PAIR_MAX_RIGHT_CHARS
+    )
+
+
+def break_score(
+    left_tokens: list[dict],
+    right_token: dict,
+    target_chars: int,
+) -> float:
+
+    if not left_tokens:
+        return -9999.0
+
+    left_text = displayed_text(
+        left_tokens
+    )
+
+    if not left_text:
+        return -9999.0
+
+    first_token = left_tokens[
+        0
+    ]
+
+    last_token = left_tokens[
+        -1
+    ]
+
+    chars = len(
+        left_text
+    )
+
+    duration = max(
+        0.0,
+        float(
+            last_token[
+                "end"
+            ]
+        )
+        -
+        float(
+            first_token[
+                "start"
+            ]
+        ),
+    )
+
+    gap = token_gap(
+        last_token,
+        right_token,
+    )
+
+    score = 0.0
+
+    # -----------------------------------------------------
+    # 길이 / 지속시간이 목표값 근처일수록 가산점
+    # -----------------------------------------------------
+
+    score += max(
+        0.0,
+        20.0
+        -
+        (
+            abs(
+                chars
+                -
+                target_chars
+            )
+            *
+            0.9
+        ),
+    )
+
+    score += max(
+        0.0,
+        10.0
+        -
+        (
+            abs(
+                duration
+                -
+                TARGET_CUE_DURATION
+            )
+            *
+            2.2
+        ),
+    )
+
+    # -----------------------------------------------------
+    # 실제 발화 pause는 매우 강한 힌트
+    # -----------------------------------------------------
+
+    if gap >= 0.60:
+        score += 70.0
+
+    elif gap >= 0.35:
+        score += 45.0
+
+    elif gap >= 0.22:
+        score += 28.0
+
+    elif gap >= 0.14:
+        score += 12.0
+
+    # -----------------------------------------------------
+    # 문장 종결은 가장 강한 의미 경계
+    # -----------------------------------------------------
+
+    if has_sentence_end(
+        last_token.get(
+            "text",
+            "",
+        )
+    ):
+        score += 100.0
+
+    # -----------------------------------------------------
+    # 연결형 어미
+    #
+    # 예: "배치하고 | 순찰과 단속을..."
+    # -----------------------------------------------------
+
+    if is_preferred_break_suffix(
+        last_token.get(
+            "text",
+            "",
+        )
+    ):
+        score += 30.0
+
+    # -----------------------------------------------------
+    # 다음 어절이 새 문장/담화 단위로 시작
+    # -----------------------------------------------------
+
+    if is_preferred_next_prefix(
+        right_token.get(
+            "text",
+            "",
+        )
+    ):
+        score += 34.0
+
+    # -----------------------------------------------------
+    # 짧은 두 어절이 pause 없이 붙어 있으면
+    # 중간 절단 강하게 억제
+    #
+    # 예: "고정 | 배치하고", "주의 | 단계로"
+    # -----------------------------------------------------
+
+    if is_tight_short_pair(
+        last_token,
+        right_token,
+    ):
+        score -= 90.0
+
+    # -----------------------------------------------------
+    # 지나치게 짧은 cue 방지
+    # -----------------------------------------------------
+
+    if (
+        chars
+        <
+        MIN_BREAK_CHARS
+    ):
+        score -= 50.0
+
+    if (
+        duration
+        <
+        MIN_BREAK_DURATION
+    ):
+        score -= 40.0
+
+    return score
+
+
+def choose_best_break_index(
+    tokens: list[dict],
+    target_chars: int,
+) -> int:
+
+    """
+    tokens 안에서 가장 자연스러운 분할 위치를 찾는다.
+
+    반환값:
+        tokens[:index]  -> 현재 cue
+        tokens[index:]  -> 다음 cue
+    """
+
+    if len(
+        tokens
+    ) <= 1:
+        return 1
+
+    best_index = None
+    best_score = -999999.0
+
+    # 마지막 token 하나는 다음 cue 후보로 남겨둔다.
+    for index in range(
+        1,
+        len(
+            tokens
+        ),
+    ):
+
+        left_tokens = tokens[
+            :index
+        ]
+
+        right_token = tokens[
+            index
+        ]
+
+        score = break_score(
+            left_tokens=(
+                left_tokens
+            ),
+            right_token=(
+                right_token
+            ),
+            target_chars=(
+                target_chars
+            ),
+        )
+
+        # 동점이면 뒤쪽 breakpoint를 선호
+        if (
+            best_index is None
+            or
+            score
+            >
+            best_score
+            or
+            (
+                abs(
+                    score
+                    -
+                    best_score
+                )
+                <
+                0.001
+                and
+                index
+                >
+                best_index
+            )
         ):
+            best_index = index
+            best_score = score
 
-            return True
+    if best_index is None:
+        return max(
+            1,
+            len(
+                tokens
+            )
+            -
+            1,
+        )
 
-    return False
+    return best_index
 
+
+# =========================================================
+# BUILD CUE
+# =========================================================
 
 def build_cue(
     cue_tokens: list[dict],
@@ -1195,12 +1378,9 @@ def build_cue(
     if not cue_tokens:
         return None
 
-    text = " ".join(
-        token[
-            "text"
-        ]
-        for token in cue_tokens
-    ).strip()
+    text = displayed_text(
+        cue_tokens
+    )
 
     if not text:
         return None
@@ -1228,7 +1408,6 @@ def build_cue(
         <
         MIN_CUE_DURATION
     ):
-
         end = (
             start
             +
@@ -1236,100 +1415,72 @@ def build_cue(
         )
 
     return {
-        "start": (
-            start
-        ),
-
-        "end": (
-            end
-        ),
-
-        "text": (
-            text
-        ),
-
+        "start": start,
+        "end": end,
+        "text": text,
         "source": (
-            "global_word_timeline"
+            "semantic_global_timeline"
         ),
     }
 
 
 # =========================================================
-# PROPORTIONAL FALLBACK
+# SEMANTIC GLOBAL CUE BUILDER
 # =========================================================
 
-def proportional_segment_fallback(
-    segment: dict,
+def build_semantic_global_cues(
+    tokens: list[dict],
     target_chars: int,
     max_chars: int,
     max_cue_duration: float,
 ) -> list[dict]:
 
-    text = str(
-        segment.get(
-            "text",
-            "",
-        )
-    ).strip()
-
-    if not text:
-        return []
-
-    tokens = (
-        split_text_tokens(
-            text
-        )
-    )
-
     if not tokens:
         return []
 
-    start = float(
-        segment[
-            "start"
-        ]
-    )
-
-    end = float(
-        segment[
-            "end"
-        ]
-    )
-
-    duration = max(
-        0.10,
-        end
-        -
-        start,
-    )
-
-    chunks = []
-
+    results = []
     current = []
+
+    def flush(
+        cue_tokens: list[dict],
+    ):
+
+        cue = build_cue(
+            cue_tokens
+        )
+
+        if cue:
+            results.append(
+                cue
+            )
 
     for token in tokens:
 
-        candidate = (
-            " ".join(
-                current
-                +
-                [
-                    token
-                ]
+        if not current:
+            current.append(
+                token
             )
+            continue
+
+        previous = current[
+            -1
+        ]
+
+        gap = token_gap(
+            previous,
+            token,
         )
 
-        if (
-            current
-            and
-            len(
-                candidate
-            )
-            >
-            max_chars
-        ):
+        # -------------------------------------------------
+        # 긴 실제 음성 gap이면 먼저 현재 cue 종료
+        # -------------------------------------------------
 
-            chunks.append(
+        if (
+            gap
+            >
+            MAX_INTER_TOKEN_GAP
+        ):
+            flush(
                 current
             )
 
@@ -1337,103 +1488,206 @@ def proportional_segment_fallback(
                 token
             ]
 
-        else:
+            continue
 
-            current.append(
+        # -------------------------------------------------
+        # 새 token까지 포함해서 hard limit 확인
+        # -------------------------------------------------
+
+        candidate = (
+            current
+            +
+            [
                 token
+            ]
+        )
+
+        candidate_text = displayed_text(
+            candidate
+        )
+
+        candidate_duration = (
+            float(
+                candidate[
+                    -1
+                ][
+                    "end"
+                ]
+            )
+            -
+            float(
+                candidate[
+                    0
+                ][
+                    "start"
+                ]
+            )
+        )
+
+        overflow = (
+            len(
+                candidate_text
+            )
+            >
+            max_chars
+            or
+            candidate_duration
+            >
+            max_cue_duration
+        )
+
+        if overflow:
+
+            # current + token 범위 안에서
+            # hard limit 이전의 가장 자연스러운 위치를 선택
+            break_index = (
+                choose_best_break_index(
+                    tokens=(
+                        candidate
+                    ),
+                    target_chars=(
+                        target_chars
+                    ),
+                )
             )
 
-    if current:
+            left = candidate[
+                :break_index
+            ]
 
-        chunks.append(
+            right = candidate[
+                break_index:
+            ]
+
+            flush(
+                left
+            )
+
+            current = right
+
+            # 드물게 남은 right 자체가 또 너무 길다면 반복 분리
+            while len(
+                current
+            ) > 1:
+
+                current_text = displayed_text(
+                    current
+                )
+
+                current_duration = (
+                    float(
+                        current[
+                            -1
+                        ][
+                            "end"
+                        ]
+                    )
+                    -
+                    float(
+                        current[
+                            0
+                        ][
+                            "start"
+                        ]
+                    )
+                )
+
+                if (
+                    len(
+                        current_text
+                    )
+                    <=
+                    max_chars
+                    and
+                    current_duration
+                    <=
+                    max_cue_duration
+                ):
+                    break
+
+                break_index = (
+                    choose_best_break_index(
+                        tokens=(
+                            current
+                        ),
+                        target_chars=(
+                            target_chars
+                        ),
+                    )
+                )
+
+                left = current[
+                    :break_index
+                ]
+
+                current = current[
+                    break_index:
+                ]
+
+                flush(
+                    left
+                )
+
+            continue
+
+        # -------------------------------------------------
+        # hard limit은 아니지만 문장 종결이면
+        # 어느 정도 길이/시간이 확보됐을 때 즉시 종료
+        # -------------------------------------------------
+
+        current.append(
+            token
+        )
+
+        current_text = displayed_text(
             current
         )
 
-    total_chars = sum(
-        max(
-            1,
-            len(
-                normalize_text(
-                    " ".join(
-                        chunk
-                    )
-                )
-            ),
-        )
-        for chunk
-        in chunks
-    )
-
-    cursor = (
-        start
-    )
-
-    results = []
-
-    for chunk in chunks:
-
-        chunk_text = (
-            " ".join(
-                chunk
+        current_duration = (
+            float(
+                current[
+                    -1
+                ][
+                    "end"
+                ]
+            )
+            -
+            float(
+                current[
+                    0
+                ][
+                    "start"
+                ]
             )
         )
 
-        chunk_chars = max(
-            1,
-            len(
-                normalize_text(
-                    chunk_text
+        if (
+            has_sentence_end(
+                token.get(
+                    "text",
+                    "",
                 )
-            ),
-        )
-
-        chunk_duration = (
-            duration
-            *
-            (
-                chunk_chars
-                /
-                total_chars
             )
-        )
+            and
+            len(
+                current_text
+            )
+            >=
+            MIN_SEMANTIC_CUE_CHARS
+            and
+            current_duration
+            >=
+            MIN_SEMANTIC_CUE_DURATION
+        ):
+            flush(
+                current
+            )
 
-        chunk_duration = min(
-            max_cue_duration,
-            max(
-                MIN_CUE_DURATION,
-                chunk_duration,
-            ),
-        )
+            current = []
 
-        chunk_end = min(
-            end,
-            cursor
-            +
-            chunk_duration,
-        )
-
-        results.append(
-            {
-                "start": (
-                    cursor
-                ),
-
-                "end": (
-                    chunk_end
-                ),
-
-                "text": (
-                    chunk_text
-                ),
-
-                "source": (
-                    "proportional_fallback"
-                ),
-            }
-        )
-
-        cursor = (
-            chunk_end
+    if current:
+        flush(
+            current
         )
 
     return results
@@ -1481,16 +1735,12 @@ def is_short_cue(
     cue: dict,
 ) -> bool:
 
-    duration = (
-        cue_duration(
-            cue
-        )
+    duration = cue_duration(
+        cue
     )
 
-    word_count = (
-        cue_word_count(
-            cue
-        )
+    word_count = cue_word_count(
+        cue
     )
 
     return (
@@ -1533,7 +1783,6 @@ def can_merge_cues(
         >
         SHORT_MERGE_MAX_DURATION
     ):
-
         return False
 
     merged_text = (
@@ -1565,14 +1814,13 @@ def can_merge_cues(
             SHORT_MERGE_EXTRA_CHARS
         )
     ):
-
         return False
 
     return True
 
 
 # =========================================================
-# MERGE SHORT CUES
+# SHORT CUE MERGE
 # =========================================================
 
 def merge_short_cues(
@@ -1586,7 +1834,6 @@ def merge_short_cues(
     if len(
         cues
     ) < 2:
-
         return (
             cues,
             0,
@@ -1600,25 +1847,24 @@ def merge_short_cues(
     ]
 
     merge_count = 0
-
     index = 0
 
-    while index < len(
-        cues
+    while (
+        index
+        <
+        len(
+            cues
+        )
     ):
 
-        cue = (
-            cues[
-                index
-            ]
-        )
+        cue = cues[
+            index
+        ]
 
         if not is_short_cue(
             cue
         ):
-
             index += 1
-
             continue
 
         previous = (
@@ -1665,23 +1911,13 @@ def merge_short_cues(
             )
         )
 
-        # =================================================
-        # NO AVAILABLE MERGE
-        # =================================================
-
         if (
             not can_previous
             and
             not can_next
         ):
-
             index += 1
-
             continue
-
-        # =================================================
-        # CHOOSE DIRECTION
-        # =================================================
 
         merge_to_next = False
 
@@ -1690,7 +1926,6 @@ def merge_short_cues(
             and
             not can_previous
         ):
-
             merge_to_next = True
 
         elif (
@@ -1698,23 +1933,9 @@ def merge_short_cues(
             and
             not can_next
         ):
-
             merge_to_next = False
 
         else:
-
-            # ---------------------------------------------
-            # 둘 다 가능할 경우
-            #
-            # 이전 cue가 문장 종결이면 다음에 붙인다.
-            #
-            # 예:
-            # "... 산불"
-            # "위험이"
-            # "커짐에 따라..."
-            #
-            # "위험이 커짐에 따라..." 쪽이 자연스럽다.
-            # ---------------------------------------------
 
             previous_text = str(
                 previous.get(
@@ -1733,20 +1954,14 @@ def merge_short_cues(
             if has_sentence_end(
                 previous_text
             ):
-
                 merge_to_next = True
 
             elif has_sentence_end(
                 cue_text
             ):
-
                 merge_to_next = False
 
             else:
-
-                # -----------------------------------------
-                # 앞/뒤 중 병합 후 duration이 짧은 쪽 선택
-                # -----------------------------------------
 
                 previous_duration = (
                     float(
@@ -1776,51 +1991,33 @@ def merge_short_cues(
                     )
                 )
 
-                #
-                # 짧은 cue는 보통 다음 말과 연결되는
-                # 조사/주어/목적어인 경우가 많아서
-                # duration 차이가 작으면 NEXT 우선
-                #
-
                 if abs(
                     previous_duration
                     -
                     next_duration
                 ) <= 0.50:
-
                     merge_to_next = True
 
                 else:
-
                     merge_to_next = (
                         next_duration
                         <
                         previous_duration
                     )
 
-        # =================================================
-        # MERGE TO NEXT
-        # =================================================
-
         if merge_to_next:
 
             merged = {
-                "start": (
-                    float(
-                        cue[
-                            "start"
-                        ]
-                    )
+                "start": float(
+                    cue[
+                        "start"
+                    ]
                 ),
-
-                "end": (
-                    float(
-                        next_cue[
-                            "end"
-                        ]
-                    )
+                "end": float(
+                    next_cue[
+                        "end"
+                    ]
                 ),
-
                 "text": (
                     str(
                         cue.get(
@@ -1838,7 +2035,6 @@ def merge_short_cues(
                         )
                     ).strip()
                 ).strip(),
-
                 "source": (
                     "short_cue_merge_next"
                 ),
@@ -1853,34 +2049,19 @@ def merge_short_cues(
 
             merge_count += 1
 
-            #
-            # 새 merged cue가 또 너무 짧은지
-            # 같은 위치에서 재검사
-            #
-
             continue
 
-        # =================================================
-        # MERGE TO PREVIOUS
-        # =================================================
-
         merged = {
-            "start": (
-                float(
-                    previous[
-                        "start"
-                    ]
-                )
+            "start": float(
+                previous[
+                    "start"
+                ]
             ),
-
-            "end": (
-                float(
-                    cue[
-                        "end"
-                    ]
-                )
+            "end": float(
+                cue[
+                    "end"
+                ]
             ),
-
             "text": (
                 str(
                     previous.get(
@@ -1898,7 +2079,6 @@ def merge_short_cues(
                     )
                 ).strip()
             ).strip(),
-
             "source": (
                 "short_cue_merge_previous"
             ),
@@ -1925,7 +2105,7 @@ def merge_short_cues(
 
 
 # =========================================================
-# REMOVE CUE OVERLAP
+# CUE TIMING SANITY
 # =========================================================
 
 def sanitize_cues(
@@ -1951,10 +2131,8 @@ def sanitize_cues(
 
     for cue in cues:
 
-        cue = (
-            copy.deepcopy(
-                cue
-            )
+        cue = copy.deepcopy(
+            cue
         )
 
         cue_start = float(
@@ -1971,11 +2149,9 @@ def sanitize_cues(
 
         if results:
 
-            previous = (
-                results[
-                    -1
-                ]
-            )
+            previous = results[
+                -1
+            ]
 
             previous_end = float(
                 previous[
@@ -2005,7 +2181,6 @@ def sanitize_cues(
                     )
                     +
                     0.10,
-
                     midpoint
                     -
                     (
@@ -2030,7 +2205,6 @@ def sanitize_cues(
             <=
             cue_start
         ):
-
             cue_end = (
                 cue_start
                 +
@@ -2039,15 +2213,11 @@ def sanitize_cues(
 
         cue[
             "start"
-        ] = (
-            cue_start
-        )
+        ] = cue_start
 
         cue[
             "end"
-        ] = (
-            cue_end
-        )
+        ] = cue_end
 
         results.append(
             cue
@@ -2071,43 +2241,48 @@ def format_subtitle_segments(
         return []
 
     # =====================================================
-    # GLOBAL WORD TIMELINE
+    # 1. GLOBAL WORD TIMELINE
     # =====================================================
 
-    global_words = (
-        collect_global_words(
-            segments
-        )
+    global_words = collect_global_words(
+        segments
     )
+
+    # =====================================================
+    # 2. CANONICAL TOKENS
+    # =====================================================
 
     (
         canonical_tokens,
         canonical_text,
-    ) = (
-        build_canonical_tokens(
-            segments
-        )
+    ) = build_canonical_tokens(
+        segments
     )
+
+    # =====================================================
+    # 3. CANONICAL ↔ WORD TIMESTAMP
+    # =====================================================
 
     align_canonical_to_words(
         canonical_tokens=(
             canonical_tokens
         ),
-
         canonical_text=(
             canonical_text
         ),
-
         global_words=(
             global_words
         ),
     )
 
+    # =====================================================
+    # 4. MISSING TIMING INTERPOLATION
+    # =====================================================
+
     interpolate_missing_token_times(
         tokens=(
             canonical_tokens
         ),
-
         segments=(
             segments
         ),
@@ -2118,206 +2293,33 @@ def format_subtitle_segments(
     )
 
     # =====================================================
-    # BUILD RAW CUES
-    # =====================================================
-
-    results = []
-
-    word_based_cues = 0
-
-    proportional_cues = 0
-
-    passthrough_cues = 0
-
-    for segment_index, segment in enumerate(
-        segments
-    ):
-
-        segment_tokens = [
-            token
-            for token
-            in canonical_tokens
-            if (
-                token[
-                    "segment_index"
-                ]
-                ==
-                segment_index
-            )
-        ]
-
-        if not segment_tokens:
-
-            fallback = (
-                proportional_segment_fallback(
-                    segment=(
-                        segment
-                    ),
-
-                    target_chars=(
-                        target_chars
-                    ),
-
-                    max_chars=(
-                        max_chars
-                    ),
-
-                    max_cue_duration=(
-                        max_cue_duration
-                    ),
-                )
-            )
-
-            results.extend(
-                fallback
-            )
-
-            proportional_cues += len(
-                fallback
-            )
-
-            continue
-
-        matched_token_count = sum(
-            1
-            for token
-            in segment_tokens
-            if (
-                token[
-                    "matched_chars"
-                ]
-                >
-                0
-            )
-        )
-
-        match_ratio = (
-            matched_token_count
-            /
-            len(
-                segment_tokens
-            )
-        )
-
-        # =================================================
-        # VERY LOW ALIGNMENT COVERAGE
-        # =================================================
-
-        if (
-            match_ratio
-            <
-            0.15
-        ):
-
-            fallback = (
-                proportional_segment_fallback(
-                    segment=(
-                        segment
-                    ),
-
-                    target_chars=(
-                        target_chars
-                    ),
-
-                    max_chars=(
-                        max_chars
-                    ),
-
-                    max_cue_duration=(
-                        max_cue_duration
-                    ),
-                )
-            )
-
-            results.extend(
-                fallback
-            )
-
-            proportional_cues += len(
-                fallback
-            )
-
-            continue
-
-        # =================================================
-        # WORD-BASED
-        # =================================================
-
-        current = []
-
-        for token in (
-            segment_tokens
-        ):
-
-            if (
-                current
-                and
-                should_break_cue(
-                    current_tokens=(
-                        current
-                    ),
-
-                    next_token=(
-                        token
-                    ),
-
-                    target_chars=(
-                        target_chars
-                    ),
-
-                    max_chars=(
-                        max_chars
-                    ),
-
-                    max_cue_duration=(
-                        max_cue_duration
-                    ),
-                )
-            ):
-
-                cue = (
-                    build_cue(
-                        current
-                    )
-                )
-
-                if cue:
-
-                    results.append(
-                        cue
-                    )
-
-                    word_based_cues += 1
-
-                current = []
-
-            current.append(
-                token
-            )
-
-        if current:
-
-            cue = (
-                build_cue(
-                    current
-                )
-            )
-
-            if cue:
-
-                results.append(
-                    cue
-                )
-
-                word_based_cues += 1
-
-    # =====================================================
-    # BASIC TIMING SANITIZE
+    # 5. SEMANTIC GLOBAL CUE BUILD
+    #
+    # canonical segment 경계를 무시하고:
+    #
+    # - 실제 pause
+    # - 문장 종결
+    # - 연결형 어미
+    # - 다음 담화 표지
+    # - target chars / duration
+    #
+    # 를 종합해서 breakpoint를 선택한다.
     # =====================================================
 
     results = (
-        sanitize_cues(
-            results
+        build_semantic_global_cues(
+            tokens=(
+                canonical_tokens
+            ),
+            target_chars=(
+                target_chars
+            ),
+            max_chars=(
+                max_chars
+            ),
+            max_cue_duration=(
+                max_cue_duration
+            ),
         )
     )
 
@@ -2325,41 +2327,63 @@ def format_subtitle_segments(
         results
     )
 
-    # =====================================================
-    # NEW:
-    # SHORT CUE READABILITY MERGE
-    # =====================================================
+    results = sanitize_cues(
+        results
+    )
 
     (
         results,
         short_merge_count,
-    ) = (
-        merge_short_cues(
-            cues=(
-                results
-            ),
-
-            max_chars=(
-                max_chars
-            ),
-        )
-    )
-
-    #
-    # 병합 후 timing overlap 다시 정리
-    #
-
-    results = (
-        sanitize_cues(
+    ) = merge_short_cues(
+        cues=(
             results
-        )
+        ),
+        max_chars=(
+            max_chars
+        ),
+    )
+
+    results = sanitize_cues(
+        results
     )
 
     # =====================================================
-    # LOG
+    # STATS
     # =====================================================
+
+    matched_tokens = sum(
+        1
+        for token
+        in canonical_tokens
+        if (
+            token[
+                "matched_chars"
+            ]
+            >
+            0
+        )
+    )
+
+    unmatched_tokens = (
+        len(
+            canonical_tokens
+        )
+        -
+        matched_tokens
+    )
+
+    token_match_ratio = (
+        matched_tokens
+        /
+        len(
+            canonical_tokens
+        )
+        if canonical_tokens
+        else 0.0
+    )
 
     print()
+
     print(
         "Subtitle formatter:"
     )
@@ -2375,22 +2399,22 @@ def format_subtitle_segments(
     )
 
     print(
-        f"  word-based cues    : "
-        f"{word_based_cues}"
+        f"  matched tokens     : "
+        f"{matched_tokens}"
     )
 
     print(
-        f"  passthrough cues   : "
-        f"{passthrough_cues}"
+        f"  unmatched tokens   : "
+        f"{unmatched_tokens}"
     )
 
     print(
-        f"  proportional cues  : "
-        f"{proportional_cues}"
+        f"  token match ratio  : "
+        f"{token_match_ratio:.1%}"
     )
 
     print(
-        f"  before short merge : "
+        f"  semantic cue build : "
         f"{before_short_merge}"
     )
 
@@ -2404,6 +2428,4 @@ def format_subtitle_segments(
         f"{len(results)}"
     )
 
-    return (
-        results
-    )
+    return results
