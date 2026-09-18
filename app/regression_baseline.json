@@ -1,0 +1,51 @@
+{
+    "description": "Stable 454.35 sec Korean news regression sample baseline after Phase 4-B.2",
+    "raw_segments": 88,
+    "alignment_passes": 1,
+    "omission_probes": 2,
+    "max_alignment_unresolved": 0,
+    "min_token_match_ratio_percent": 90.0,
+    "cue_count_min": 120,
+    "cue_count_max": 126,
+    "min_omissions_applied": 1,
+    "omission_verification": [
+      2,
+      2
+    ],
+    "min_omission_realign_similarity": 0.99,
+    "min_omission_realign_words": 12,
+    "min_corrections": 9,
+    "max_review_candidates": 0,
+    "required_phrases": [
+      "살폈습니다.",
+      "절삭유",
+      "불쏘시개",
+      "대전지방고용노동청",
+      "체류를 하게 돼요",
+      "불법 증축"
+    ],
+    "required_srt_phrases": [
+      "가공 라인",
+      "살폈습니다.",
+      "절삭유",
+      "불쏘시개",
+      "대피가 어려웠",
+      "건축법이나 소방법"
+    ],
+    "forbidden_srt_phrases": [
+      "가옥 라인",
+      "절사기",
+      "절사규",
+      "불쏘식",
+      "대전지방고용노동척",
+      "전장에 유증기가",
+      "퇴류를 하게 돼요",
+      "불법 중축",
+      "라인에대해서",
+      "대피가어려웠",
+      "건축법이나소방법"
+    ],
+    "max_total_processing_seconds": 60.0,
+    "strict_performance": false
+  }
+  
