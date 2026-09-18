@@ -1,0 +1,41 @@
+# Python virtual environment
+.venv/
+venv/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# IDE
+.vscode/
+.idea/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Input media
+input/*
+!input/.gitkeep
+
+# Generated output
+output/*
+!output/.gitkeep
+
+# Working files
+work/*
+!work/.gitkeep
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+
+# OS
+.DS_Store
+Thumbs.db
+*.deb
